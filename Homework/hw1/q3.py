@@ -62,5 +62,5 @@ def ring_allreduce_(tensor: torch.Tensor, world_size = None, rankid = None):
 
     # stitch & unpad  
     padded_flat.div_(world)
-    tensor.view(-1).copy_(flat[:n])
+    tensor.view(-1).copy_(padded_flat[:n])
     return
