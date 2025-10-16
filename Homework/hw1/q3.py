@@ -6,19 +6,32 @@ import torch
 import torch.distributed as dist
 
 def reduce_scatter(chunks, tmp, world, rank, left, right):
-    #                                                                   #
-    #                                                                   #
-    # your code here: follow slides instruction: do counter-clockwise iteration
-    #                                                                   #
-    #                                                                   #
+    for s in range(world - 1):
+        send_idx = (rank - s) % world
+        recv_idx = (rank - s - 1) % world
+
+        send_req = dist.isend(chunks[send_idx], dst=right)
+        recv_req = dist.irecv(tmp, src=left)
+
+        recv_req.wait()
+        send_req.wait()
+
+        chunks[recv_idx] += tmp
     return
         
 def all_gather(chunks, tmp, current, world, rank, left, right):
-    #                                                                   #
-    #                                                                   #
-    # your code here: follow slides instruction: do counter-clockwise iteration
-    #                                                                   #
-    #                                                                   #
+    for s in range(world - 1):
+        send_idx = current
+        recv_idx = (current - 1) % world
+
+        send_req = dist.isend(chunks[send_idx], dst=right)
+        recv_req = dist.irecv(tmp, src=left)
+
+        recv_req.wait()
+        send_req.wait()
+
+        chunks[recv_idx].copy_(tmp)
+        current = recv_idx
     return
 
 def ring_allreduce_(tensor: torch.Tensor, world_size = None, rankid = None):
@@ -32,26 +45,21 @@ def ring_allreduce_(tensor: torch.Tensor, world_size = None, rankid = None):
     flat = tensor.contiguous().view(-1)
     n = flat.numel()
     chunk = (n + world - 1) // world
-    #                                                                   #
-    #                                                                   #
-    # your code here: we cannot divide flat into 3 pieces evenly as the
-    # flat lengh may not be able to divided exactly by 3....
-    #
-    #                                                                   #
-    #                                                                   #
+
+    padded_n = chunk * world
+
     #So, fill zeros at the end of flat to generate padded_flat
-    padded_flat = None # modify this line and fill correct value into padded_flat
+    padded_flat = torch.zeros(
+        padded_n, dtype=flat.dtype, device=flat.device
+    )
+    padded_flat[:n].copy_(flat)
     chunks = [padded_flat[i*chunk:(i+1)*chunk] for i in range(world)]
 
-    #                                                                   #
-    #                                                                   #
-    # your code here: call reduce_scatter and all_gather
-    #
-    #                                                                   #
-    #                                                                   #
-    #we provide the reduce_scatter and all_gather func prototype for you
-    # You may adjust the function signature (input structure) of `reduce_scatter` and `all_gather` if needed.
-    
+    tmp = torch.empty_like(chunks[0])
+    reduce_scatter(chunks, tmp, world, rank, left, right)
+    current = (rank - (world - 1)) % world
+    all_gather(chunks, tmp, current, world, rank, left, right)
+
     # stitch & unpad  
     flat /= world
     tensor.view(-1).copy_(flat[:n])
